@@ -34,6 +34,7 @@ func (c *Client) FetchSessions(ctx context.Context) ([]Session, error) {
 		return nil, fmt.Errorf("failed to create sessions request: %w", err)
 	}
 
+	req.Header.Set("Authorization", fmt.Sprintf(`MediaBrowser Token="%s"`, c.apiKey))
 	req.Header.Set("X-Emby-Token", c.apiKey)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "JellyfinSleepInhibitor/1.0.0 (Windows Service)")
