@@ -1,0 +1,20 @@
+{
+  "jellyfin": {
+    "server_url": "http://localhost:8096",
+    "api_key": "YOUR_JELLYFIN_API_KEY_HERE",
+    "polling_interval_seconds": 15,
+    "request_timeout_seconds": 10
+  },
+  "power": {
+    "idle_grace_period_minutes": 5,
+    "ignore_paused": false,
+    "paused_grace_period_minutes": 15,
+    "keep_awake_on_network_error": true,
+    "require_away_mode": true
+  },
+  "logging": {
+    "level": "info",
+    "log_to_file": true,
+    "log_file_path": "jellyfin_sleep_inhibitor.log"
+  }
+}
