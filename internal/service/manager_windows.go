@@ -139,10 +139,18 @@ func Status() (string, error) {
 	m := &mgr.Mgr{Handle: h}
 	defer m.Disconnect()
 
-	s, err := m.OpenService(ServiceName)
+	namePtr, err := windows.UTF16PtrFromString(ServiceName)
 	if err != nil {
-		return "Not Installed", nil
+		return "", err
 	}
+	sh, err := windows.OpenService(m.Handle, namePtr, windows.SERVICE_QUERY_STATUS)
+	if err != nil {
+		if err == windows.ERROR_SERVICE_DOES_NOT_EXIST {
+			return "Not Installed", nil
+		}
+		return "", fmt.Errorf("failed to open service: %w", err)
+	}
+	s := &mgr.Service{Name: ServiceName, Handle: sh}
 	defer s.Close()
 
 	status, err := s.Query()
