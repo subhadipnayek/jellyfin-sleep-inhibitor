@@ -4,6 +4,7 @@ package power
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"syscall"
 )
@@ -17,17 +18,55 @@ const (
 )
 
 var (
-	kernel32                     = syscall.NewLazyDLL("kernel32.dll")
-	procSetThreadExecutionState  = kernel32.NewProc("SetThreadExecutionState")
+	kernel32                    = syscall.NewLazyDLL("kernel32.dll")
+	procSetThreadExecutionState = kernel32.NewProc("SetThreadExecutionState")
 )
+
+type powerCmd struct {
+	inhibit         bool
+	requireAwayMode bool
+	reply           chan error
+}
 
 type Manager struct {
 	mu          sync.Mutex
 	isInhibited bool
+	cmds        chan powerCmd
 }
 
 func NewManager() *Manager {
-	return &Manager{}
+	m := &Manager{
+		cmds: make(chan powerCmd),
+	}
+	go m.runLockedThread()
+	return m
+}
+
+// runLockedThread pins a single OS thread for all SetThreadExecutionState calls.
+// Windows tracks thread execution state per-OS-thread, so InhibitSleep and
+// AllowSleep must always execute on the exact same OS thread.
+func (m *Manager) runLockedThread() {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	for cmd := range m.cmds {
+		var flags uintptr
+		if cmd.inhibit {
+			flags = uintptr(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+			if cmd.requireAwayMode {
+				flags |= uintptr(ES_AWAYMODE_REQUIRED)
+			}
+		} else {
+			flags = uintptr(ES_CONTINUOUS)
+		}
+
+		ret, _, err := procSetThreadExecutionState.Call(flags)
+		if ret == 0 {
+			cmd.reply <- fmt.Errorf("SetThreadExecutionState(0x%X) failed: %v", flags, err)
+		} else {
+			cmd.reply <- nil
+		}
+	}
 }
 
 // InhibitSleep tells Windows to stay awake and prevent system sleep
@@ -35,14 +74,14 @@ func (m *Manager) InhibitSleep(requireAwayMode bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	flags := uintptr(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
-	if requireAwayMode {
-		flags |= uintptr(ES_AWAYMODE_REQUIRED)
+	reply := make(chan error, 1)
+	m.cmds <- powerCmd{
+		inhibit:         true,
+		requireAwayMode: requireAwayMode,
+		reply:           reply,
 	}
-
-	ret, _, err := procSetThreadExecutionState.Call(flags)
-	if ret == 0 {
-		return fmt.Errorf("SetThreadExecutionState failed: %v", err)
+	if err := <-reply; err != nil {
+		return err
 	}
 
 	m.isInhibited = true
@@ -54,10 +93,13 @@ func (m *Manager) AllowSleep() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Calling SetThreadExecutionState with only ES_CONTINUOUS clears other flags
-	ret, _, err := procSetThreadExecutionState.Call(uintptr(ES_CONTINUOUS))
-	if ret == 0 {
-		return fmt.Errorf("SetThreadExecutionState(ES_CONTINUOUS) failed: %v", err)
+	reply := make(chan error, 1)
+	m.cmds <- powerCmd{
+		inhibit: false,
+		reply:   reply,
+	}
+	if err := <-reply; err != nil {
+		return err
 	}
 
 	m.isInhibited = false
